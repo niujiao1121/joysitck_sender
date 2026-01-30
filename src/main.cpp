@@ -1,0 +1,523 @@
+#include <SDL2/SDL.h>
+#include <winsock2.h>
+#include <windows.h>
+#include <ws2tcpip.h>
+
+#include <algorithm>
+#include <chrono>
+#include <cstdarg>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <map>
+#include <string>
+#include <thread>
+#include <vector>
+
+static bool FileExists(const std::string& path) {
+  std::ifstream file(path);
+  return file.good();
+}
+
+static const char* kVersion = "1.0.1";
+
+struct Config {
+  std::string host = "127.0.0.1";
+  int port = 12121;
+  int send_hz = 50;
+  bool debug = false;
+  int print_every = 50;
+  std::string log_path = "joystick_sender.log";
+  bool raw_dump = false;
+  float axis_deadzone = 0.05f;
+  float vx_max = 0.5f;
+  float vy_max = 0.5f;
+  float wz_max = 1.0f;
+  float height_min = 0.2f;
+  float height_max = 0.5f;
+  float height_step = 0.01f;
+  float pitch_min = -0.3f;
+  float pitch_max = 0.3f;
+  float pitch_step = 0.02f;
+  float roll_min = -0.3f;
+  float roll_max = 0.3f;
+  float roll_step = 0.02f;
+  int mode_min = 0;
+  int mode_max = 10;
+  int gait_min = 0;
+  int gait_max = 5;
+};
+
+struct State {
+  float height = 0.35f;
+  float pitch = 0.0f;
+  float roll = 0.0f;
+  int mode = 0;
+  int gait = 0;
+
+  // 记录按键上一次状态，用于边沿触发
+  std::map<SDL_GameControllerButton, bool> last_buttons;
+};
+
+static float Clamp(float v, float lo, float hi) {
+  return std::max(lo, std::min(hi, v));
+}
+
+static float ApplyDeadzone(float v, float deadzone) {
+  return (std::abs(v) < deadzone) ? 0.0f : v;
+}
+
+static float NormalizeAxis(Sint16 value) {
+  // SDL 摇杆范围为 [-32768, 32767]，归一化到 [-1, 1]
+  if (value < 0) {
+    return static_cast<float>(value) / 32768.0f;
+  }
+  return static_cast<float>(value) / 32767.0f;
+}
+
+static bool ParseConfigLine(const std::string& line, std::string* key, std::string* value) {
+  auto pos = line.find('=');
+  if (pos == std::string::npos) {
+    return false;
+  }
+  *key = line.substr(0, pos);
+  *value = line.substr(pos + 1);
+  return true;
+}
+
+static void Trim(std::string* s) {
+  const char* whitespace = " \t\r\n";
+  auto start = s->find_first_not_of(whitespace);
+  if (start == std::string::npos) {
+    s->clear();
+    return;
+  }
+  auto end = s->find_last_not_of(whitespace);
+  *s = s->substr(start, end - start + 1);
+
+  // 去掉 UTF-8 BOM（防止 key 匹配失败）
+  const unsigned char bom[] = {0xEF, 0xBB, 0xBF};
+  if (s->size() >= 3 &&
+      static_cast<unsigned char>((*s)[0]) == bom[0] &&
+      static_cast<unsigned char>((*s)[1]) == bom[1] &&
+      static_cast<unsigned char>((*s)[2]) == bom[2]) {
+    *s = s->substr(3);
+  }
+}
+
+static bool ParseBool(const std::string& value) {
+  std::string v = value;
+  std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  return v == "1" || v == "true" || v == "yes" || v == "on";
+}
+
+static void LoadConfig(const std::string& path, Config* config) {
+  std::ifstream file(path);
+  if (!file.is_open()) {
+    std::fprintf(stderr, "配置文件未找到，使用默认配置: %s\n", path.c_str());
+    return;
+  }
+  std::fprintf(stderr, "读取配置文件: %s\n", path.c_str());
+  std::string line;
+  while (std::getline(file, line)) {
+    Trim(&line);
+    if (line.empty() || line[0] == '#') {
+      continue;
+    }
+    std::string key;
+    std::string value;
+    if (!ParseConfigLine(line, &key, &value)) {
+      continue;
+    }
+    Trim(&key);
+    Trim(&value);
+    std::fprintf(stderr, "配置项: %s=%s\n", key.c_str(), value.c_str());
+    if (key == "udp_host") {
+      config->host = value;
+    } else if (key == "udp_port") {
+      config->port = std::stoi(value);
+    } else if (key == "send_hz") {
+      config->send_hz = std::stoi(value);
+    } else if (key == "debug") {
+      config->debug = ParseBool(value);
+    } else if (key == "print_every") {
+      config->print_every = std::max(1, std::stoi(value));
+    } else if (key == "log_path") {
+      config->log_path = value;
+    } else if (key == "raw_dump") {
+      config->raw_dump = ParseBool(value);
+    } else if (key == "axis_deadzone") {
+      config->axis_deadzone = std::stof(value);
+    } else if (key == "vx_max") {
+      config->vx_max = std::stof(value);
+    } else if (key == "vy_max") {
+      config->vy_max = std::stof(value);
+    } else if (key == "wz_max") {
+      config->wz_max = std::stof(value);
+    } else if (key == "height_min") {
+      config->height_min = std::stof(value);
+    } else if (key == "height_max") {
+      config->height_max = std::stof(value);
+    } else if (key == "height_step") {
+      config->height_step = std::stof(value);
+    } else if (key == "pitch_min") {
+      config->pitch_min = std::stof(value);
+    } else if (key == "pitch_max") {
+      config->pitch_max = std::stof(value);
+    } else if (key == "pitch_step") {
+      config->pitch_step = std::stof(value);
+    } else if (key == "roll_min") {
+      config->roll_min = std::stof(value);
+    } else if (key == "roll_max") {
+      config->roll_max = std::stof(value);
+    } else if (key == "roll_step") {
+      config->roll_step = std::stof(value);
+    } else if (key == "mode_min") {
+      config->mode_min = std::stoi(value);
+    } else if (key == "mode_max") {
+      config->mode_max = std::stoi(value);
+    } else if (key == "gait_min") {
+      config->gait_min = std::stoi(value);
+    } else if (key == "gait_max") {
+      config->gait_max = std::stoi(value);
+    }
+  }
+}
+
+static FILE* g_log_file = nullptr;
+
+static void EnsureUtf8Bom(FILE* file) {
+  if (!file) {
+    return;
+  }
+  long pos = std::ftell(file);
+  if (pos == 0) {
+    const unsigned char bom[3] = {0xEF, 0xBB, 0xBF};
+    std::fwrite(bom, 1, 3, file);
+    std::fflush(file);
+  }
+}
+
+static void LogLine(const char* fmt, ...) {
+  HANDLE console = GetStdHandle(STD_ERROR_HANDLE);
+  DWORD mode = 0;
+  bool has_console = (console != INVALID_HANDLE_VALUE) && GetConsoleMode(console, &mode);
+
+  va_list args;
+  va_start(args, fmt);
+  char utf8_buf[2048];
+  std::vsnprintf(utf8_buf, sizeof(utf8_buf), fmt, args);
+  va_end(args);
+
+  if (has_console) {
+    int wide_len = MultiByteToWideChar(CP_UTF8, 0, utf8_buf, -1, nullptr, 0);
+    if (wide_len > 0) {
+      std::wstring wide_buf(wide_len, L'\0');
+      MultiByteToWideChar(CP_UTF8, 0, utf8_buf, -1, &wide_buf[0], wide_len);
+      DWORD written = 0;
+      WriteConsoleW(console, wide_buf.c_str(),
+                    static_cast<DWORD>(wcslen(wide_buf.c_str())), &written, nullptr);
+    } else {
+      std::fputs(utf8_buf, stderr);
+    }
+  } else {
+    std::fputs(utf8_buf, stderr);
+  }
+
+  if (g_log_file) {
+    std::fputs(utf8_buf, g_log_file);
+    std::fflush(g_log_file);
+  }
+}
+
+static void LogRawState(SDL_Joystick* joystick, std::vector<int>* last_axes,
+                        std::vector<int>* last_buttons, int* last_hat) {
+  if (!joystick) {
+    return;
+  }
+  int axes = SDL_JoystickNumAxes(joystick);
+  int buttons = SDL_JoystickNumButtons(joystick);
+  int hats = SDL_JoystickNumHats(joystick);
+
+  if (static_cast<int>(last_axes->size()) != axes) {
+    last_axes->assign(axes, 0);
+  }
+  if (static_cast<int>(last_buttons->size()) != buttons) {
+    last_buttons->assign(buttons, 0);
+  }
+
+  bool changed = false;
+  std::string axis_line = "原始轴:";
+  for (int i = 0; i < axes; ++i) {
+    int raw = SDL_JoystickGetAxis(joystick, i);
+    if (raw != (*last_axes)[i]) {
+      changed = true;
+      (*last_axes)[i] = raw;
+    }
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), " a%d=%d", i, raw);
+    axis_line += buf;
+  }
+
+  std::string button_line = "原始按键:";
+  for (int i = 0; i < buttons; ++i) {
+    int pressed = SDL_JoystickGetButton(joystick, i);
+    if (pressed != (*last_buttons)[i]) {
+      changed = true;
+      (*last_buttons)[i] = pressed;
+    }
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), " b%d=%d", i, pressed);
+    button_line += buf;
+  }
+
+  int hat = (hats > 0) ? SDL_JoystickGetHat(joystick, 0) : 0;
+  if (hat != *last_hat) {
+    changed = true;
+    *last_hat = hat;
+  }
+  char hat_buf[16];
+  std::snprintf(hat_buf, sizeof(hat_buf), " hat=%d", hat);
+
+  if (changed) {
+    LogLine("%s\n", axis_line.c_str());
+    LogLine("%s%s\n", button_line.c_str(), hat_buf);
+  }
+}
+
+static void HandleButtonEdge(State* state, const Config& config,
+                             SDL_GameControllerButton button, bool pressed) {
+  bool last = state->last_buttons[button];
+  state->last_buttons[button] = pressed;
+  if (!pressed || last) {
+    return;
+  }
+
+  if (button == SDL_CONTROLLER_BUTTON_A) {
+    state->mode = std::min(config.mode_max, state->mode + 1);
+  } else if (button == SDL_CONTROLLER_BUTTON_B) {
+    state->mode = std::max(config.mode_min, state->mode - 1);
+  } else if (button == SDL_CONTROLLER_BUTTON_X) {
+    state->gait = std::min(config.gait_max, state->gait + 1);
+  } else if (button == SDL_CONTROLLER_BUTTON_Y) {
+    state->gait = std::max(config.gait_min, state->gait - 1);
+  } else if (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER) {
+    state->roll = Clamp(state->roll - config.roll_step, config.roll_min, config.roll_max);
+  } else if (button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) {
+    state->roll = Clamp(state->roll + config.roll_step, config.roll_min, config.roll_max);
+  }
+}
+
+static void HandleDpad(State* state, const Config& config, SDL_GameControllerButton button,
+                       bool pressed) {
+  if (!pressed) {
+    return;
+  }
+  if (button == SDL_CONTROLLER_BUTTON_DPAD_UP) {
+    state->height = Clamp(state->height + config.height_step, config.height_min, config.height_max);
+  } else if (button == SDL_CONTROLLER_BUTTON_DPAD_DOWN) {
+    state->height = Clamp(state->height - config.height_step, config.height_min, config.height_max);
+  } else if (button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) {
+    state->pitch = Clamp(state->pitch + config.pitch_step, config.pitch_min, config.pitch_max);
+  } else if (button == SDL_CONTROLLER_BUTTON_DPAD_LEFT) {
+    state->pitch = Clamp(state->pitch - config.pitch_step, config.pitch_min, config.pitch_max);
+  }
+}
+
+int main(int argc, char** argv) {
+  Config config;
+  if (argc > 1) {
+    LoadConfig(argv[1], &config);
+  } else {
+    const std::string default_config = "config.txt";
+    if (FileExists(default_config)) {
+      LoadConfig(default_config, &config);
+    } else {
+      std::fprintf(stderr, "未指定配置文件，使用默认配置。\n");
+    }
+  }
+
+  SetConsoleOutputCP(CP_UTF8);
+  SetConsoleCP(CP_UTF8);
+
+  if (!config.log_path.empty()) {
+    g_log_file = std::fopen(config.log_path.c_str(), "a");
+    if (!g_log_file) {
+      std::fprintf(stderr, "无法打开日志文件: %s\n", config.log_path.c_str());
+    } else {
+      EnsureUtf8Bom(g_log_file);
+    }
+  }
+
+  LogLine("启动中... 版本=%s\n", kVersion);
+  LogLine("配置: debug=%d raw_dump=%d print_every=%d log_path=%s\n",
+          config.debug ? 1 : 0, config.raw_dump ? 1 : 0, config.print_every,
+          config.log_path.c_str());
+
+  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK | SDL_INIT_EVENTS) != 0) {
+    LogLine("SDL 初始化失败: %s\n", SDL_GetError());
+    return 1;
+  }
+  LogLine("SDL 初始化完成。\n");
+  SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+  SDL_SetHint(SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0");
+  SDL_GameControllerEventState(SDL_ENABLE);
+
+  SDL_Window* window = SDL_CreateWindow(
+      "joystick_sender",
+      SDL_WINDOWPOS_UNDEFINED,
+      SDL_WINDOWPOS_UNDEFINED,
+      320,
+      200,
+      SDL_WINDOW_HIDDEN);
+  if (!window) {
+    LogLine("创建 SDL 窗口失败: %s\n", SDL_GetError());
+  }
+
+  SDL_GameController* controller = nullptr;
+  SDL_Joystick* joystick = nullptr;
+  int joystick_count = SDL_NumJoysticks();
+  LogLine("检测到手柄数量: %d\n", joystick_count);
+  for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+    if (SDL_IsGameController(i)) {
+      const char* name = SDL_GameControllerNameForIndex(i);
+      LogLine("发现手柄[%d]: %s\n", i, name ? name : "unknown");
+      controller = SDL_GameControllerOpen(i);
+      if (controller) {
+        joystick = SDL_GameControllerGetJoystick(controller);
+        break;
+      }
+    }
+  }
+
+  if (!controller) {
+    LogLine("未发现可用手柄，请确认已连接。\n");
+    SDL_Quit();
+    return 1;
+  }
+  LogLine("已打开手柄: %s\n", SDL_GameControllerName(controller));
+  if (joystick) {
+    LogLine("手柄轴数量: %d, 按键数量: %d, Hat 数量: %d\n",
+            SDL_JoystickNumAxes(joystick),
+            SDL_JoystickNumButtons(joystick),
+            SDL_JoystickNumHats(joystick));
+  }
+
+  WSADATA wsa_data;
+  if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
+    LogLine("WSAStartup 失败。\n");
+    SDL_GameControllerClose(controller);
+    SDL_Quit();
+    return 1;
+  }
+
+  SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (sock == INVALID_SOCKET) {
+    LogLine("创建 UDP socket 失败。\n");
+    WSACleanup();
+    SDL_GameControllerClose(controller);
+    SDL_Quit();
+    return 1;
+  }
+
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(static_cast<uint16_t>(config.port));
+  addr.sin_addr.s_addr = inet_addr(config.host.c_str());
+  LogLine("UDP 目标: %s:%d\n", config.host.c_str(), config.port);
+
+  State state;
+  state.height = config.height_min + (config.height_max - config.height_min) * 0.5f;
+  state.mode = config.mode_min;
+  state.gait = config.gait_min;
+
+  const int interval_ms = std::max(1, 1000 / std::max(1, config.send_hz));
+  uint32_t last_send = SDL_GetTicks();
+  LogLine("发送频率: %d Hz, 间隔: %d ms\n", config.send_hz, interval_ms);
+
+  bool running = true;
+  int send_count = 0;
+  std::vector<int> last_axes;
+  std::vector<int> last_buttons;
+  int last_hat = 0;
+  while (running) {
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+      if (event.type == SDL_QUIT) {
+        running = false;
+      } else if (event.type == SDL_CONTROLLERBUTTONDOWN ||
+                 event.type == SDL_CONTROLLERBUTTONUP) {
+        SDL_GameControllerButton button =
+            static_cast<SDL_GameControllerButton>(event.cbutton.button);
+        bool pressed = (event.cbutton.state == SDL_PRESSED);
+        if (config.debug) {
+          LogLine("按键事件: button=%d pressed=%d\n",
+                  static_cast<int>(button), pressed ? 1 : 0);
+        }
+        HandleButtonEdge(&state, config, button, pressed);
+        HandleDpad(&state, config, button, pressed);
+      }
+    }
+
+    uint32_t now = SDL_GetTicks();
+    if (now - last_send >= static_cast<uint32_t>(interval_ms)) {
+      SDL_PumpEvents();
+      SDL_GameControllerUpdate();
+      SDL_JoystickUpdate();
+      float lx = NormalizeAxis(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTX));
+      float ly = NormalizeAxis(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTY));
+      float rx = NormalizeAxis(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTX));
+      float ry = NormalizeAxis(SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_RIGHTY));
+      float lt = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT) / 32767.0f;
+      float rt = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) / 32767.0f;
+
+      lx = ApplyDeadzone(lx, config.axis_deadzone);
+      ly = ApplyDeadzone(ly, config.axis_deadzone);
+      rx = ApplyDeadzone(rx, config.axis_deadzone);
+      ry = ApplyDeadzone(ry, config.axis_deadzone);
+
+      float vx = -ly * config.vx_max;
+      float vy = lx * config.vy_max;
+      float wz = -rx * config.wz_max;
+
+      char buffer[256];
+      std::snprintf(buffer, sizeof(buffer), "CMD %.3f %.3f %.3f %.3f %.3f %.3f %d %d",
+                    vx, vy, wz, state.height, state.pitch, state.roll, state.mode, state.gait);
+
+      int result = sendto(sock, buffer, static_cast<int>(std::strlen(buffer)), 0,
+                          reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+      if (result == SOCKET_ERROR) {
+        LogLine("发送失败，错误码: %d\n", WSAGetLastError());
+      }
+      send_count += 1;
+      if (config.debug && (send_count % config.print_every == 0)) {
+        LogLine("发送数据: %s\n", buffer);
+        LogLine("轴: lx=%.3f ly=%.3f rx=%.3f ry=%.3f lt=%.3f rt=%.3f\n",
+                lx, ly, rx, ry, lt, rt);
+        if (config.raw_dump && joystick) {
+          LogRawState(joystick, &last_axes, &last_buttons, &last_hat);
+        }
+      }
+
+      last_send = now;
+    }
+
+    SDL_Delay(1);
+  }
+
+  closesocket(sock);
+  WSACleanup();
+  SDL_GameControllerClose(controller);
+  if (window) {
+    SDL_DestroyWindow(window);
+  }
+  SDL_Quit();
+  if (g_log_file) {
+    std::fclose(g_log_file);
+  }
+  return 0;
+}
