@@ -3,6 +3,9 @@
 本项目提供一个在 Windows 11 上运行的手柄监听程序，将手柄输入映射为 `CMD` 指令，通过 UDP 持续发送。
 
 当前实现基于 SDL2，可在 Ubuntu 24.04 上交叉编译 Windows 可执行文件（目标机无需 Python）。
+此外也提供 Linux 版本，可直接在 Ubuntu 24.04 上编译运行。
+
+版本号与变更记录见 `VERSION.md`。
 
 ### 依赖
 
@@ -34,6 +37,28 @@ export SDL2_DIR="$PWD/deps/SDL2-2.30.2/x86_64-w64-mingw32"
 
 构建完成后可在 `dist/` 目录找到 `joystick_sender.exe`。
 
+### 构建 Linux 可执行文件
+
+本机已安装 `libsdl2-dev` 时，可直接执行：
+
+```bash
+./build_linux.sh
+```
+
+构建完成后会生成：
+
+```bash
+dist/linux/joystick_sender_linux
+```
+
+运行示例：
+
+```bash
+./dist/linux/joystick_sender_linux config.txt
+```
+
+Linux 版本同样基于 SDL2，并额外处理了手柄热插拔和当前实例追踪，避免切换手柄时把旧设备状态混到新设备上。
+
 ### Windows 运行
 
 构建完成后，直接拷贝 `dist/package/` 整个目录到 Windows 机器即可使用。
@@ -46,6 +71,7 @@ export SDL2_DIR="$PWD/deps/SDL2-2.30.2/x86_64-w64-mingw32"
 - `libwinpthread-1.dll`
 - `udp_receiver.exe`（本地接收测试工具）
 - `keyboard_sender.exe`（键盘发送工具）
+- `retroid_sender.exe`（Retroid 协议发送工具）
 - `config.txt`（可选配置）
 - `README.txt`（运行说明）
 
@@ -69,6 +95,12 @@ export SDL2_DIR="$PWD/deps/SDL2-2.30.2/x86_64-w64-mingw32"
 
 键盘发送会读取同目录 `config.txt` 中的 `udp_host`/`udp_port`，命令行参数会覆盖配置。
 
+Retroid 协议发送：
+
+```powershell
+.\retroid_sender.exe
+```
+
 ### 在 Ubuntu 上验证 UDP 接收
 
 方式一（推荐，简单）：
@@ -77,13 +109,7 @@ export SDL2_DIR="$PWD/deps/SDL2-2.30.2/x86_64-w64-mingw32"
 nc -ul 12121
 ```
 
-方式二（自带小工具）：
-
-```bash
-python tools/udp_receiver.py --port 12121
-```
-
-方式三（抓包查看）：
+方式二（抓包查看）：
 
 ```bash
 sudo tcpdump -n -vv -i any udp port 12121
@@ -95,12 +121,6 @@ sudo tcpdump -n -vv -i any udp port 12121
 可设置 `debug=1` 开启调试输出，`print_every` 控制每隔 N 帧打印一次发送内容。
 `log_path` 可指定日志文件路径（默认 `joystick_sender.log`），适合双击运行时排查问题。
 `raw_dump=1` 会输出所有原始轴值，用于判断 SDL 映射是否生效。
-
-### 运行
-
-```bash
-python joystick_udp_sender.py --config config.json
-```
 
 ### 默认按键映射
 

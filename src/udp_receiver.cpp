@@ -34,6 +34,8 @@ static void LogLine(const char* fmt, ...) {
   }
 }
 
+static const char* kVersion = "0.1.0";
+
 int main(int argc, char** argv) {
   int port = 12121;
   if (argc > 1) {
@@ -65,7 +67,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  LogLine("开始监听 UDP 端口: %d\n", port);
+  LogLine("开始监听 UDP 端口: %d 版本=%s\n", port, kVersion);
 
   char buffer[2048];
   sockaddr_in from{};

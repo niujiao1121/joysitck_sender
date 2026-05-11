@@ -9,7 +9,7 @@
 #include <string>
 #include <thread>
 
-static const char* kVersion = "1.0.1";
+static const char* kVersion = "0.1.0";
 
 struct Config {
   std::string host = "127.0.0.1";
