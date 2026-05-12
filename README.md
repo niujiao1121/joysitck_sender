@@ -9,7 +9,7 @@
 
 ### 依赖
 
-以下内容用于生成 Windows 可执行文件：
+Windows 交叉编译依赖：
 
 - Ubuntu 24.04
 - 交叉编译工具链：`mingw-w64`
@@ -28,6 +28,20 @@ sudo apt-get install -y mingw-w64
 2. 解压到本项目的 `deps/` 下，例如：
    `deps/SDL2-2.30.2/`
 
+Linux 本机构建依赖：
+
+- Ubuntu 24.04
+- `g++`
+- `pkg-config`
+- `libsdl2-dev`
+
+安装 Linux 构建依赖：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y g++ pkg-config libsdl2-dev
+```
+
 ### 构建 Windows 可执行文件
 
 ```bash
@@ -39,7 +53,7 @@ export SDL2_DIR="$PWD/deps/SDL2-2.30.2/x86_64-w64-mingw32"
 
 ### 构建 Linux 可执行文件
 
-本机已安装 `libsdl2-dev` 时，可直接执行：
+请先确保已安装 `g++`、`pkg-config` 和 `libsdl2-dev`，然后执行：
 
 ```bash
 ./build_linux.sh
@@ -121,6 +135,7 @@ sudo tcpdump -n -vv -i any udp port 12121
 可设置 `debug=1` 开启调试输出，`print_every` 控制每隔 N 帧打印一次发送内容。
 `log_path` 可指定日志文件路径（默认 `joystick_sender.log`），适合双击运行时排查问题。
 `raw_dump=1` 会输出所有原始轴值，用于判断 SDL 映射是否生效。
+`invert_left_horizontal_axis=1` 会翻转左摇杆水平轴方向，影响 `vy`。
 
 ### 默认按键映射
 
@@ -147,6 +162,7 @@ CMD <vx> <vy> <wz> <height> <pitch> <roll> <mode> <gait>
 - `udp_host`/`udp_port`：UDP 目标地址
 - `send_hz`：发送频率
 - `axis_deadzone`：摇杆死区
+- `invert_left_horizontal_axis`：是否翻转左摇杆水平轴方向（`0`/`1`）
 - `vx_max`/`vy_max`/`wz_max`：速度缩放
 - `height_*`/`pitch_*`/`roll_*`：机身姿态范围与步进
 - `mode_*`/`gait_*`：允许范围

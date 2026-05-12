@@ -32,6 +32,7 @@ struct Config {
   std::string log_path = "joystick_sender_linux.log";
   bool raw_dump = false;
   float axis_deadzone = 0.05f;
+  bool invert_left_horizontal_axis = true;
   float vx_max = 0.5f;
   float vy_max = 0.5f;
   float wz_max = 1.0f;
@@ -159,6 +160,10 @@ static void LoadConfig(const std::string& path, Config* config) {
       config->raw_dump = ParseBool(value);
     } else if (key == "axis_deadzone") {
       config->axis_deadzone = std::stof(value);
+    } else if (key == "invert_left_horizontal_axis") {
+      config->invert_left_horizontal_axis = ParseBool(value);
+    } else if (key == "invert_horizontal_axis") {
+      config->invert_left_horizontal_axis = ParseBool(value);
     } else if (key == "vx_max") {
       config->vx_max = std::stof(value);
     } else if (key == "vy_max") {
@@ -592,6 +597,10 @@ int main(int argc, char** argv) {
       ly = ApplyDeadzone(ly, config.axis_deadzone);
       rx = ApplyDeadzone(rx, config.axis_deadzone);
       ry = ApplyDeadzone(ry, config.axis_deadzone);
+
+      if (config.invert_left_horizontal_axis) {
+        lx = -lx;
+      }
 
       float vx = -ly * config.vx_max;
       float vy = lx * config.vy_max;

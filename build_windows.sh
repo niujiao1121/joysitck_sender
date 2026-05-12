@@ -24,12 +24,13 @@ PY
 )"
 PACKAGE_DIR="${OUT_DIR}/${PROJECT_NAME}-${VERSION}"
 ZIP_NAME="${OUT_DIR}/${PROJECT_NAME}-${VERSION}.zip"
+GXX=x86_64-w64-mingw32-g++
 
 # 清理旧的打包产物（zip 与目录）
 rm -f "${OUT_DIR}/${PROJECT_NAME}-"*.zip
 rm -rf "${OUT_DIR}/${PROJECT_NAME}-"*/
 
-x86_64-w64-mingw32-g++ \
+"${GXX}" \
   -std=c++17 \
   -O2 \
   -I"${SDL2_DIR}/include" \
@@ -40,7 +41,7 @@ x86_64-w64-mingw32-g++ \
 
 echo "已生成 ${OUT_DIR}/joystick_sender.exe"
 
-x86_64-w64-mingw32-g++ \
+"${GXX}" \
   -std=c++17 \
   -O2 \
   src/udp_receiver.cpp \
@@ -49,7 +50,7 @@ x86_64-w64-mingw32-g++ \
 
 echo "已生成 ${OUT_DIR}/udp_receiver.exe"
 
-x86_64-w64-mingw32-g++ \
+"${GXX}" \
   -std=c++17 \
   -O2 \
   src/keyboard_sender.cpp \
@@ -58,7 +59,7 @@ x86_64-w64-mingw32-g++ \
 
 echo "已生成 ${OUT_DIR}/keyboard_sender.exe"
 
-x86_64-w64-mingw32-g++ \
+"${GXX}" \
   -std=c++17 \
   -O2 \
   -I"${SDL2_DIR}/include" \
@@ -78,14 +79,43 @@ cp "${OUT_DIR}/joystick_sender.exe" \
    "${OUT_DIR}/retroid_sender.exe" \
    "${PACKAGE_DIR}/"
 
-# 依赖文件与说明（从现有打包目录拷贝）
-cp "dist/package/SDL2.dll" \
-   "dist/package/libgcc_s_seh-1.dll" \
-   "dist/package/libstdc++-6.dll" \
-   "dist/package/libwinpthread-1.dll" \
-   "dist/package/config.txt" \
-   "dist/package/README.txt" \
-   "${PACKAGE_DIR}/"
+copy_runtime_dll() {
+  local name="$1"
+  local path
+  path="$("${GXX}" -print-file-name="${name}")"
+  if [[ -f "${path}" ]]; then
+    cp "${path}" "${PACKAGE_DIR}/"
+    return
+  fi
+  path="/usr/x86_64-w64-mingw32/lib/${name}"
+  if [[ -f "${path}" ]]; then
+    cp "${path}" "${PACKAGE_DIR}/"
+    return
+  fi
+  echo "找不到运行时依赖: ${name}"
+  exit 1
+}
+
+cp "${SDL2_DIR}/bin/SDL2.dll" "${PACKAGE_DIR}/"
+copy_runtime_dll "libgcc_s_seh-1.dll"
+copy_runtime_dll "libstdc++-6.dll"
+copy_runtime_dll "libwinpthread-1.dll"
+cp "config.txt" "${PACKAGE_DIR}/"
+cat > "${PACKAGE_DIR}/README.txt" <<'EOF'
+joystick_sender Windows package
+
+Run:
+  joystick_sender.exe config.txt
+
+Local UDP receiver test:
+  udp_receiver.exe 12121
+
+Keyboard sender:
+  keyboard_sender.exe
+
+Retroid sender:
+  retroid_sender.exe
+EOF
 
 # 打包为 zip（解压即用）
 export ZIP_NAME

@@ -34,6 +34,7 @@ struct Config {
   std::string log_path = "joystick_sender.log";
   bool raw_dump = false;
   float axis_deadzone = 0.05f;
+  bool invert_left_horizontal_axis = true;
   float vx_max = 0.5f;
   float vy_max = 0.5f;
   float wz_max = 1.0f;
@@ -61,13 +62,6 @@ struct State {
 
   // 记录按键上一次状态，用于边沿触发
   std::map<SDL_GameControllerButton, bool> last_buttons;
-};
-
-struct ControllerContext {
-  SDL_GameController* controller = nullptr;
-  SDL_Joystick* joystick = nullptr;
-  SDL_JoystickID instance_id = -1;
-  std::string name;
 };
 
 struct ControllerContext {
@@ -168,6 +162,10 @@ static void LoadConfig(const std::string& path, Config* config) {
       config->raw_dump = ParseBool(value);
     } else if (key == "axis_deadzone") {
       config->axis_deadzone = std::stof(value);
+    } else if (key == "invert_left_horizontal_axis") {
+      config->invert_left_horizontal_axis = ParseBool(value);
+    } else if (key == "invert_horizontal_axis") {
+      config->invert_left_horizontal_axis = ParseBool(value);
     } else if (key == "vx_max") {
       config->vx_max = std::stof(value);
     } else if (key == "vy_max") {
@@ -436,68 +434,6 @@ static void ActivateController(SDL_JoystickID instance_id,
           static_cast<int>(instance_id), controller->name.c_str());
 }
 
-static void ResetSnapshots(State* state, std::vector<int>* last_axes,
-                           std::vector<int>* last_buttons, int* last_hat) {
-  state->last_buttons.clear();
-  last_axes->clear();
-  last_buttons->clear();
-  *last_hat = 0;
-}
-
-static void CloseController(ControllerContext* ctx) {
-  if (ctx->controller) {
-    SDL_GameControllerClose(ctx->controller);
-  }
-  ctx->controller = nullptr;
-  ctx->joystick = nullptr;
-  ctx->instance_id = -1;
-  ctx->name.clear();
-}
-
-static bool OpenControllerByIndex(int device_index, ControllerContext* ctx) {
-  if (!SDL_IsGameController(device_index)) {
-    return false;
-  }
-
-  SDL_GameController* controller = SDL_GameControllerOpen(device_index);
-  if (!controller) {
-    LogLine("打开手柄[%d]失败: %s\n", device_index, SDL_GetError());
-    return false;
-  }
-
-  SDL_Joystick* joystick = SDL_GameControllerGetJoystick(controller);
-  SDL_JoystickID instance_id = SDL_JoystickInstanceID(joystick);
-  const char* name = SDL_GameControllerName(controller);
-
-  CloseController(ctx);
-  ctx->controller = controller;
-  ctx->joystick = joystick;
-  ctx->instance_id = instance_id;
-  ctx->name = name ? name : "unknown";
-
-  LogLine("已打开手柄: index=%d instance_id=%d name=%s\n",
-          device_index, static_cast<int>(instance_id), ctx->name.c_str());
-  LogLine("手柄轴数量: %d, 按键数量: %d, Hat 数量: %d\n",
-          SDL_JoystickNumAxes(joystick),
-          SDL_JoystickNumButtons(joystick),
-          SDL_JoystickNumHats(joystick));
-  return true;
-}
-
-static bool TryOpenFirstController(ControllerContext* ctx) {
-  const int joystick_count = SDL_NumJoysticks();
-  LogLine("当前检测到手柄数量: %d\n", joystick_count);
-  for (int i = 0; i < joystick_count; ++i) {
-    const char* name = SDL_JoystickNameForIndex(i);
-    LogLine("发现设备[%d]: %s game_controller=%d\n",
-            i, name ? name : "unknown", SDL_IsGameController(i) ? 1 : 0);
-    if (OpenControllerByIndex(i, ctx)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 static void HandleButtonEdge(State* state, const Config& config,
                              SDL_GameControllerButton button, bool pressed) {
   bool last = state->last_buttons[button];
@@ -521,8 +457,8 @@ static void HandleButtonEdge(State* state, const Config& config,
   }
 }
 
-static void HandleDpad(State* state, const Config& config, SDL_GameControllerButton button,
-                       bool pressed) {
+static void HandleDpad(State* state, const Config& config,
+                       SDL_GameControllerButton button, bool pressed) {
   if (!pressed) {
     return;
   }
@@ -601,7 +537,12 @@ int main(int argc, char** argv) {
   WSADATA wsa_data;
   if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
     LogLine("WSAStartup 失败。\n");
-    SDL_GameControllerClose(controller);
+    for (auto& controller : controllers) {
+      CloseController(&controller);
+    }
+    if (window) {
+      SDL_DestroyWindow(window);
+    }
     SDL_Quit();
     return 1;
   }
@@ -610,7 +551,12 @@ int main(int argc, char** argv) {
   if (sock == INVALID_SOCKET) {
     LogLine("创建 UDP socket 失败。\n");
     WSACleanup();
-    SDL_GameControllerClose(controller);
+    for (auto& controller : controllers) {
+      CloseController(&controller);
+    }
+    if (window) {
+      SDL_DestroyWindow(window);
+    }
     SDL_Quit();
     return 1;
   }
@@ -706,6 +652,10 @@ int main(int argc, char** argv) {
       ly = ApplyDeadzone(ly, config.axis_deadzone);
       rx = ApplyDeadzone(rx, config.axis_deadzone);
       ry = ApplyDeadzone(ry, config.axis_deadzone);
+
+      if (config.invert_left_horizontal_axis) {
+        lx = -lx;
+      }
 
       float vx = -ly * config.vx_max;
       float vy = lx * config.vy_max;

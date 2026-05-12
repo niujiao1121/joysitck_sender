@@ -7,6 +7,7 @@ print_every=20
 log_path=joystick_sender.log
 raw_dump=1
 axis_deadzone=0.05
+invert_left_horizontal_axis=1
 vx_max=0.5
 vy_max=0.5
 wz_max=1.0
