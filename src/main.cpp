@@ -23,7 +23,7 @@ static bool FileExists(const std::string& path) {
   return file.good();
 }
 
-static const char* kVersion = "0.1.0";
+static const char* kVersion = "0.2.1";
 
 struct Config {
   std::string host = "127.0.0.1";
@@ -57,7 +57,7 @@ struct State {
   float height = 0.35f;
   float pitch = 0.0f;
   float roll = 0.0f;
-  int mode = 0;
+  int mode = -1;
   int gait = 0;
 
   // 记录按键上一次状态，用于边沿触发
@@ -204,6 +204,11 @@ static void LoadConfig(const std::string& path, Config* config) {
 
 static FILE* g_log_file = nullptr;
 static constexpr Sint16 kActiveAxisThreshold = 12000;
+static constexpr float kTriggerPressedThreshold = 0.5f;
+static constexpr int kModeStandingUp = 1;
+static constexpr int kModeJointDamping = 2;
+static constexpr int kModeRLControl = 6;
+static constexpr int kModeLieDown = 18;
 
 static void EnsureUtf8Bom(FILE* file) {
   if (!file) {
@@ -443,9 +448,9 @@ static void HandleButtonEdge(State* state, const Config& config,
   }
 
   if (button == SDL_CONTROLLER_BUTTON_A) {
-    state->mode = std::min(config.mode_max, state->mode + 1);
+    state->mode = kModeStandingUp;
   } else if (button == SDL_CONTROLLER_BUTTON_B) {
-    state->mode = std::max(config.mode_min, state->mode - 1);
+    state->mode = kModeLieDown;
   } else if (button == SDL_CONTROLLER_BUTTON_X) {
     state->gait = std::min(config.gait_max, state->gait + 1);
   } else if (button == SDL_CONTROLLER_BUTTON_Y) {
@@ -569,7 +574,7 @@ int main(int argc, char** argv) {
 
   State state;
   state.height = config.height_min + (config.height_max - config.height_min) * 0.5f;
-  state.mode = config.mode_min;
+  state.mode = -1;
   state.gait = config.gait_min;
 
   const int interval_ms = std::max(1, 1000 / std::max(1, config.send_hz));
@@ -660,6 +665,16 @@ int main(int argc, char** argv) {
       float vx = -ly * config.vx_max;
       float vy = lx * config.vy_max;
       float wz = -rx * config.wz_max;
+
+      bool lb = SDL_GameControllerGetButton(active_controller->controller,
+                                            SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
+      bool rb = SDL_GameControllerGetButton(active_controller->controller,
+                                            SDL_CONTROLLER_BUTTON_RIGHTSHOULDER);
+      if (lb && rb) {
+        state.mode = kModeRLControl;
+      } else if (lt >= kTriggerPressedThreshold && rt >= kTriggerPressedThreshold) {
+        state.mode = kModeJointDamping;
+      }
 
       char buffer[256];
       std::snprintf(buffer, sizeof(buffer), "CMD %.3f %.3f %.3f %.3f %.3f %.3f %d %d",

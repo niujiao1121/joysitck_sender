@@ -140,13 +140,17 @@ sudo tcpdump -n -vv -i any udp port 12121
 ### 默认按键映射
 
 基于 SDL2 的 GameController 映射，自动适配常见手柄，不需要手工调整。
+默认 `mode=-1`，表示不发送外部 motion command。
 
 - 左摇杆 X/Y -> `vx`/`vy`
 - 右摇杆 X -> `wz`
 - 十字键上下 -> `height` 增减
 - 十字键左右 -> `pitch` 增减
 - LB/RB -> `roll` 增减
-- A/B -> `mode` 增减
+- A -> `mode=1`（StandingUp/站立）
+- B -> `mode=18`（LieDown/趴下）
+- LB+RB -> `mode=6`（RLControlMode）
+- LT+RT -> `mode=2`（JointDamping/Damping）
 - X/Y -> `gait` 增减
 
 ### UDP 报文
