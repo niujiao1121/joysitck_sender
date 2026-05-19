@@ -145,8 +145,8 @@ sudo tcpdump -n -vv -i any udp port 12121
 - 左摇杆 X/Y -> `vx`/`vy`
 - 右摇杆 X -> `wz`
 - 十字键上下 -> `height` 增减
-- 十字键左右 -> `pitch` 增减
-- LB/RB -> `roll` 增减
+- 十字键左右 -> `roll` 增减
+- LB/RB -> `pitch` 增减
 - A -> `mode=1`（StandingUp/站立）
 - B -> `mode=18`（LieDown/趴下）
 - LB+RB -> `mode=6`（RLControlMode）
