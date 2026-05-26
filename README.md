@@ -151,7 +151,8 @@ sudo tcpdump -n -vv -i any udp port 12121
 - B -> `mode=18`（LieDown/趴下）
 - LB+RB -> `mode=6`（RLControlMode）
 - LT+RT -> `mode=2`（JointDamping/Damping）
-- X/Y -> `gait` 增减
+- X -> `gait=0`
+- Y -> `gait=1`
 
 ### UDP 报文
 
@@ -170,3 +171,4 @@ CMD <vx> <vy> <wz> <height> <pitch> <roll> <mode> <gait>
 - `vx_max`/`vy_max`/`wz_max`：速度缩放
 - `height_*`/`pitch_*`/`roll_*`：机身姿态范围与步进
 - `mode_*`/`gait_*`：允许范围
+- `gait_default`：启动时默认步态

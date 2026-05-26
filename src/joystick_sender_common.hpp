@@ -12,7 +12,7 @@
 
 namespace joystick_sender {
 
-inline constexpr const char* kVersion = "0.2.4";
+inline constexpr const char* kVersion = "0.2.5";
 inline constexpr Sint16 kActiveAxisThreshold = 12000;
 inline constexpr float kTriggerPressedThreshold = 0.5f;
 inline constexpr int kModeStandingUp = 1;
@@ -46,6 +46,7 @@ struct Config {
   int mode_max = 10;
   int gait_min = 0;
   int gait_max = 5;
+  int gait_default = 0;
 };
 
 struct State {
@@ -228,6 +229,8 @@ inline void LoadConfig(const std::string& path, Config* config, bool echo_items 
       config->gait_min = std::stoi(value);
     } else if (key == "gait_max") {
       config->gait_max = std::stoi(value);
+    } else if (key == "gait_default") {
+      config->gait_default = std::stoi(value);
     }
   }
 }
@@ -440,9 +443,9 @@ inline void HandleButtonEdge(State* state, const Config& config,
   } else if (button == SDL_CONTROLLER_BUTTON_B) {
     state->mode = kModeLieDown;
   } else if (button == SDL_CONTROLLER_BUTTON_X) {
-    state->gait = std::min(config.gait_max, state->gait + 1);
+    state->gait = 0;
   } else if (button == SDL_CONTROLLER_BUTTON_Y) {
-    state->gait = std::max(config.gait_min, state->gait - 1);
+    state->gait = 1;
   } else if (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER) {
     state->pitch = Clamp(state->pitch - config.pitch_step, config.pitch_min, config.pitch_max);
   } else if (button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) {

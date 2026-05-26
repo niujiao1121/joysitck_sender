@@ -130,7 +130,7 @@ int main(int argc, char** argv) {
   LogLine("  LB/RB -> pitch 增减\n");
   LogLine("  A -> mode=1 StandingUp，B -> mode=18 LieDown\n");
   LogLine("  LB+RB -> mode=6 RLControl，LT+RT -> mode=2 JointDamping\n");
-  LogLine("  X/Y -> gait 增减\n");
+  LogLine("  X/Y -> gait 0/1\n");
 
   SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
   SDL_SetHint(SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0");
@@ -179,7 +179,7 @@ int main(int argc, char** argv) {
   State state;
   state.height = config.height_min + (config.height_max - config.height_min) * 0.5f;
   state.mode = -1;
-  state.gait = config.gait_min;
+  state.gait = std::min(config.gait_max, std::max(config.gait_min, config.gait_default));
 
   std::vector<ControllerContext> controllers;
   SDL_JoystickID active_instance_id = -1;

@@ -24,3 +24,4 @@ mode_min=0
 mode_max=10
 gait_min=0
 gait_max=5
+gait_default=0

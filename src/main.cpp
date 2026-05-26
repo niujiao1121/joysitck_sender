@@ -199,7 +199,7 @@ int main(int argc, char** argv) {
   LogLine("  LB/RB -> pitch 增减\n");
   LogLine("  A -> mode=1 StandingUp，B -> mode=18 LieDown\n");
   LogLine("  LB+RB -> mode=6 RLControl，LT+RT -> mode=2 JointDamping\n");
-  LogLine("  X/Y -> gait 增减\n");
+  LogLine("  X -> gait=0, Y -> gait=1\n");
 
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK | SDL_INIT_EVENTS) != 0) {
     LogLine("SDL 初始化失败: %s\n", SDL_GetError());
@@ -276,7 +276,7 @@ int main(int argc, char** argv) {
   State state;
   state.height = config.height_min + (config.height_max - config.height_min) * 0.5f;
   state.mode = -1;
-  state.gait = config.gait_min;
+  state.gait = std::min(config.gait_max, std::max(config.gait_min, config.gait_default));
 
   const int interval_ms = std::max(1, 1000 / std::max(1, config.send_hz));
   uint32_t last_send = SDL_GetTicks();
